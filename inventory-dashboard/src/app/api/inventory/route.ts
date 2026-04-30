@@ -11,72 +11,83 @@ export async function GET(request: NextRequest) {
   const where: Record<string, unknown> = {};
   if (search) {
     where.OR = [
-      { name: { contains: search } },
+      { title: { contains: search } },
       { sku: { contains: search } },
     ];
   }
   if (category !== "all") {
-    where.category = category;
+    where.categoryL1 = category;
   }
 
   const orderBy: Record<string, string> = {};
-  if (sortCol && ["name", "sku", "currentStock", "price", "category"].includes(sortCol)) {
+  const allowedSorts = ["title", "sku", "originalPrice", "discountPrice", "categoryL1", "createdAt"];
+  if (sortCol && allowedSorts.includes(sortCol)) {
     orderBy[sortCol] = sortDir;
   } else {
     orderBy["createdAt"] = "desc";
   }
 
-  const [products, totalCount, lowStockCount] = await Promise.all([
-    prisma.product.findMany({
-      where,
-      orderBy,
-      include: {
-        platformLinks: {
-          include: { platform: true },
-        },
-      },
-    }),
-    prisma.product.count({ where }),
-    prisma.product.count({
-      where: {
-        currentStock: { lt: prisma.product.fields.safetyStock },
-      },
-    }),
-  ]);
-
-  // Count today's sync failures
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const syncFailures = await prisma.syncTask.count({
-    where: {
-      status: { in: ["failed", "partial_fail"] },
-      createdAt: { gte: today },
+  const products = await prisma.product.findMany({
+    where,
+    orderBy,
+    include: {
+      warehouseStocks: { include: { warehouse: true } },
+      platformLinks: { include: { platform: true } },
     },
   });
 
-  // Transform data for frontend
+  const totalCount = await prisma.product.count({ where });
+
+  const allProducts = await prisma.product.findMany({
+    include: { warehouseStocks: true },
+  });
+  const lowStockCount = allProducts.filter((p) => {
+    const total = p.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
+    return total < p.safetyStock;
+  }).length;
+
+  // Today's sync failures
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const syncFailures = await prisma.syncTask.count({
+    where: { status: { in: ["failed", "partial_fail"] }, createdAt: { gte: today } },
+  });
+
+  // Transform for frontend
   const items = products.map((p) => {
+    const totalStock = p.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
     const platformStatus: Record<string, string> = {};
     for (const link of p.platformLinks) {
       platformStatus[link.platform.code] = link.syncStatus;
     }
     return {
       id: p.id,
-      name: p.name,
+      title: p.title,
       sku: p.sku,
-      category: p.category,
-      currentStock: p.currentStock,
+      categoryL1: p.categoryL1,
+      categoryL2: p.categoryL2,
+      currentStock: totalStock,
       safetyStock: p.safetyStock,
-      price: p.price,
+      originalPrice: p.originalPrice,
+      discountPrice: p.discountPrice,
+      costPrice: p.costPrice,
       unit: p.unit,
+      weight: p.weight,
+      beijingId: p.beijingId,
+      warehouseStocks: p.warehouseStocks.map((ws) => ({
+        warehouseName: ws.warehouse.name,
+        stock: ws.stock,
+        unattendedStock: ws.unattendedStock,
+        damagedStock: ws.damagedStock,
+        shelfId: ws.shelfId,
+      })),
       platformStatus,
     };
   });
 
-  // Get unique categories
   const categories = await prisma.product.findMany({
-    select: { category: true },
-    distinct: ["category"],
+    select: { categoryL1: true },
+    distinct: ["categoryL1"],
   });
 
   return NextResponse.json({
@@ -84,6 +95,6 @@ export async function GET(request: NextRequest) {
     totalCount,
     lowStockCount,
     syncFailures,
-    categories: categories.map((c) => c.category),
+    categories: categories.map((c) => c.categoryL1),
   });
 }

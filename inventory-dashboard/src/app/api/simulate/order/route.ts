@@ -1,91 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-// Simulate receiving a Meituan order -> auto decrease inventory -> trigger sync
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { productIds } = body;
-
-    if (!productIds || !Array.isArray(productIds) || productIds.length === 0) {
-      return NextResponse.json({ error: "请提供商品ID列表" }, { status: 400 });
-    }
-
-    const meituan = await prisma.platform.findUnique({ where: { code: "meituan" } });
-    if (!meituan || meituan.status !== "connected") {
-      return NextResponse.json({ error: "美团平台未连接" }, { status: 400 });
-    }
-
-    const results = [];
-
-    for (const productId of productIds) {
-      try {
-        const result = await prisma.$transaction(async (tx) => {
-          const product = await tx.product.findUnique({ where: { id: productId } });
-          if (!product) throw new Error("商品不存在");
-
-          const newStock = Math.max(0, product.currentStock - 1);
-          const updated = await tx.product.update({
-            where: { id: productId },
-            data: { currentStock: newStock },
-          });
-
-          // Create operation log
-          await tx.operationLog.create({
-            data: {
-              action: "stock_out",
-              entityType: "product",
-              entityId: productId,
-              detail: JSON.stringify({
-                productName: product.name,
-                delta: -1,
-                reason: `美团订单 #MT${Date.now().toString(36).toUpperCase()} 自动扣减`,
-                from: product.currentStock,
-                to: newStock,
-              }),
-            },
-          });
-
-          return updated;
-        });
-        results.push({ productId, currentStock: result.currentStock, success: true });
-      } catch (e) {
-        results.push({ productId, currentStock: 0, success: false, error: e instanceof Error ? e.message : "失败" });
-      }
-    }
-
-    // Create sync task to push updated inventory to platform
-    const failCount = results.filter((r) => !r.success).length;
-    await prisma.syncTask.create({
-      data: {
-        platformId: meituan.id,
-        type: "order_decrease",
-        status: failCount === 0 ? "success" : "partial_fail",
-        totalCount: productIds.length,
-        failCount,
-        startedAt: new Date(),
-        finishedAt: new Date(),
-        items: {
-          create: results.map((r) => ({
-            productId: r.productId,
-            status: r.success ? "success" : "failed",
-            errorCode: r.success ? null : "ORDER_PROCESS_ERROR",
-            errorMessage: r.success ? null : r.error,
-          })),
-        },
-      },
-    });
-
-    return NextResponse.json({
-      message: `模拟订单处理完成: ${results.filter(r => r.success).length}/${productIds.length} 成功`,
-      results,
-    });
-  } catch {
-    return NextResponse.json({ error: "模拟订单失败" }, { status: 500 });
-  }
-}
-
-// Also support GET to simulate a random order
 export async function GET() {
   try {
     const meituan = await prisma.platform.findUnique({ where: { code: "meituan" } });
@@ -93,30 +8,44 @@ export async function GET() {
       return NextResponse.json({ error: "美团平台未连接" }, { status: 400 });
     }
 
-    // Pick a random product with stock > 0
     const products = await prisma.product.findMany({
-      where: { currentStock: { gt: 0 } },
-      take: 5,
+      include: { warehouseStocks: { take: 1 } },
     });
+    const withStock = products.filter((p) =>
+      p.warehouseStocks.reduce((s, ws) => s + ws.stock, 0) > 0
+    );
 
-    if (products.length === 0) {
+    if (withStock.length === 0) {
       return NextResponse.json({ message: "没有可扣减的商品" });
     }
 
-    const randomCount = Math.min(Math.floor(Math.random() * 3) + 1, products.length);
-    const selected = products.sort(() => Math.random() - 0.5).slice(0, randomCount);
+    const randomCount = Math.min(Math.floor(Math.random() * 2) + 1, withStock.length);
+    const selected = withStock.sort(() => Math.random() - 0.5).slice(0, randomCount);
 
-    const results = [];
+    const results: { productId: string; name: string; currentStock: number }[] = [];
+
     for (const product of selected) {
       const result = await prisma.$transaction(async (tx) => {
-        const p = await tx.product.findUnique({ where: { id: product.id } });
-        if (!p || p.currentStock <= 0) return null;
-
-        const newStock = p.currentStock - 1;
-        const updated = await tx.product.update({
+        const p = await tx.product.findUnique({
           where: { id: product.id },
-          data: { currentStock: newStock },
+          include: { warehouseStocks: { take: 1 } },
         });
+        if (!p || p.warehouseStocks.length === 0) return null;
+
+        const ws = p.warehouseStocks[0];
+        if (ws.stock <= 0) return null;
+
+        const newStock = ws.stock - 1;
+        await tx.warehouseInventory.update({
+          where: { id: ws.id },
+          data: { stock: newStock },
+        });
+
+        const totalAfter = await tx.product.findUnique({
+          where: { id: product.id },
+          include: { warehouseStocks: true },
+        });
+        const newTotal = totalAfter!.warehouseStocks.reduce((s, w) => s + w.stock, 0);
 
         await tx.operationLog.create({
           data: {
@@ -124,21 +53,17 @@ export async function GET() {
             entityType: "product",
             entityId: product.id,
             detail: JSON.stringify({
-              productName: p.name,
-              delta: -1,
+              productName: p.title, delta: -1,
               reason: `美团订单 #MT${Date.now().toString(36).toUpperCase()} 自动扣减`,
-              from: p.currentStock,
-              to: newStock,
+              from: ws.stock + 1, to: newTotal,
             }),
           },
         });
 
-        return updated;
+        return { productId: product.id, name: p.title, currentStock: newTotal };
       });
 
-      if (result) {
-        results.push({ productId: product.id, name: product.name, currentStock: result.currentStock, success: true });
-      }
+      if (result) results.push(result);
     }
 
     // Create sync task
@@ -152,10 +77,7 @@ export async function GET() {
         startedAt: new Date(),
         finishedAt: new Date(),
         items: {
-          create: results.map((r) => ({
-            productId: r.productId,
-            status: "success",
-          })),
+          create: results.map((r) => ({ productId: r.productId, status: "success" })),
         },
       },
     });

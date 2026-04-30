@@ -12,7 +12,7 @@ model User {
   name      String
   email     String   @unique
   password  String
-  role      String   @default("staff") // owner, staff
+  role      String   @default("staff") // owner | staff
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -20,33 +20,69 @@ model User {
 }
 
 model Product {
-  id           String   @id @default(cuid())
-  name         String
-  sku          String   @unique
-  barcode      String?
-  category     String
-  mainImage    String?
-  detailImages String?   // JSON array of image URLs
-  price        Float
-  unit         String   @default("个")
-  description  String?
-  safetyStock  Int      @default(0)
-  currentStock Int      @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  sku                 String   @unique
+  title               String   // 商品标题
+  onlineSpec          String?  // 线上规格
+  beijingId           String?  // 北京编号
+  originalPrice       Float    @default(0) // 价格（原价）
+  discountPrice       Float    @default(0) // 折扣价格
+  costPrice           Float    @default(0) // 进价
+  weight              Float?   // 重量(g)
+  categoryL1          String   // 一级分类
+  categoryL2          String?  // 二级分类
+  mainImage           String?  // 商品主图
+  shippingSampleImage String?  // 出库样图
+  link                String?  // 1688/货源链接
+  purchaseSpec        String?  // 购买规格
+  jdSku               String?  // 京东礼定SKU
+  packagingMaterial   String?  // 包装耗材
+  packagingPrice      Float    @default(0) // 耗材价格
+  description         String?  // 备注描述
+  unit                String   @default("个")
+  safetyStock         Int      @default(0) // 安全库存警戒线
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  platformLinks ProductPlatformLink[]
-  syncTaskItems SyncTaskItem[]
+  platformLinks   ProductPlatformLink[]
+  syncTaskItems   SyncTaskItem[]
+  warehouseStocks WarehouseInventory[]
+}
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  name      String   // 国贸, 海淀, 西二旗
+  code      String   @unique // guomao, haidian, xierqi
+  address   String?
+  createdAt DateTime @default(now())
+
+  inventories WarehouseInventory[]
+}
+
+model WarehouseInventory {
+  id               String   @id @default(cuid())
+  warehouseId      String
+  productId        String
+  stock            Int      @default(0) // 正常库存
+  unattendedStock  Int      @default(0) // 无人值守库存
+  shelfId          String?  // 货架编号
+  damagedStock     Int      @default(0) // 货损库存
+  updatedAt        DateTime @updatedAt
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, productId])
 }
 
 model Platform {
   id        String   @id @default(cuid())
-  name      String   // 美团闪购, 饿了么, 京东到家, 抖音小时达, 微店
-  code      String   @unique // meituan, eleme, jddj, douyin, weidian
+  name      String
+  code      String   @unique
   status    String   @default("disconnected") // connected, disconnected, expired
-  authType  String   @default("oauth") // oauth, apikey
-  authData  String?  // JSON with encrypted tokens
-  config    String?  // JSON: sync strategy, price float ratio, stock ratio
+  authType  String   @default("oauth")
+  authData  String?
+  config    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -58,9 +94,9 @@ model ProductPlatformLink {
   id               String   @id @default(cuid())
   productId        String
   platformId       String
-  platformProductId String?  // platform-side product ID
-  platformSku      String?  // platform-side SKU
-  syncStatus       String   @default("pending") // pending, synced, failed
+  platformProductId String?
+  platformSku      String?
+  syncStatus       String   @default("pending")
   lastSyncAt       DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -74,8 +110,8 @@ model ProductPlatformLink {
 model SyncTask {
   id         String    @id @default(cuid())
   platformId String
-  type       String    // push_inventory, push_product, pull_product, order_decrease
-  status     String    @default("pending") // pending, running, success, partial_fail, failed
+  type       String
+  status     String    @default("pending")
   totalCount Int       @default(0)
   failCount  Int       @default(0)
   errorMsg   String?
@@ -91,7 +127,7 @@ model SyncTaskItem {
   id           String   @id @default(cuid())
   taskId       String
   productId    String
-  status       String   @default("pending") // pending, success, failed
+  status       String   @default("pending")
   errorCode    String?
   errorMessage String?
   createdAt    DateTime @default(now())

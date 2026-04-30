@@ -24,20 +24,33 @@ export async function POST(request: NextRequest) {
 
     const { productId, delta, reason } = parsed.data;
 
-    // Use transaction + optimistic locking
     const result = await prisma.$transaction(async (tx) => {
-      const product = await tx.product.findUnique({ where: { id: productId } });
+      const product = await tx.product.findUnique({
+        where: { id: productId },
+        include: { warehouseStocks: { take: 1 } },
+      });
       if (!product) throw new Error("商品不存在");
 
-      const newStock = product.currentStock + delta;
-      if (newStock < 0) throw new Error("库存不足，无法扣减");
+      const totalStock = product.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
+      const newTotal = totalStock + delta;
+      if (newTotal < 0) throw new Error("库存不足，无法扣减");
 
-      const updated = await tx.product.update({
+      // Update first warehouse stock (国贸)
+      if (product.warehouseStocks.length > 0) {
+        const ws = product.warehouseStocks[0];
+        await tx.warehouseInventory.update({
+          where: { id: ws.id },
+          data: { stock: Math.max(0, ws.stock + delta) },
+        });
+      }
+
+      // Recalculate total
+      const updatedProduct = await tx.product.findUnique({
         where: { id: productId },
-        data: { currentStock: newStock },
+        include: { warehouseStocks: true },
       });
+      const newTotalActual = updatedProduct!.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
 
-      // Create operation log
       await tx.operationLog.create({
         data: {
           userId: user.userId,
@@ -45,22 +58,19 @@ export async function POST(request: NextRequest) {
           entityType: "product",
           entityId: productId,
           detail: JSON.stringify({
-            productName: product.name,
+            productName: product.title,
             delta,
             reason: reason || (delta > 0 ? "手动加库存" : "手动减库存"),
-            from: product.currentStock,
-            to: newStock,
+            from: totalStock,
+            to: newTotalActual,
           }),
         },
       });
 
-      return updated;
+      return { productId, currentStock: newTotalActual };
     });
 
-    return NextResponse.json({
-      productId: result.id,
-      currentStock: result.currentStock,
-    });
+    return NextResponse.json(result);
   } catch (e) {
     const message = e instanceof Error ? e.message : "操作失败";
     const status = message === "库存不足，无法扣减" ? 422 : 500;

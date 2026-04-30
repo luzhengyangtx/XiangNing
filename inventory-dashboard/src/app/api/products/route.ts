@@ -4,15 +4,33 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 
 const createSchema = z.object({
-  name: z.string().min(1),
   sku: z.string().min(1),
-  barcode: z.string().optional(),
-  category: z.string().min(1),
-  price: z.number().positive(),
-  unit: z.string().default("个"),
+  title: z.string().min(1),
+  onlineSpec: z.string().optional(),
+  beijingId: z.string().optional(),
+  originalPrice: z.number().min(0).default(0),
+  discountPrice: z.number().min(0).default(0),
+  costPrice: z.number().min(0).default(0),
+  weight: z.number().optional(),
+  categoryL1: z.string().min(1),
+  categoryL2: z.string().optional(),
+  mainImage: z.string().optional(),
+  shippingSampleImage: z.string().optional(),
+  link: z.string().optional(),
+  purchaseSpec: z.string().optional(),
+  jdSku: z.string().optional(),
+  packagingMaterial: z.string().optional(),
+  packagingPrice: z.number().min(0).default(0),
   description: z.string().optional(),
+  unit: z.string().default("个"),
   safetyStock: z.number().int().min(0).default(0),
-  currentStock: z.number().int().min(0).default(0),
+  warehouseStocks: z.array(z.object({
+    warehouseId: z.string(),
+    stock: z.number().int().min(0).default(0),
+    unattendedStock: z.number().int().min(0).default(0),
+    shelfId: z.string().optional(),
+    damagedStock: z.number().int().min(0).default(0),
+  })).optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -22,21 +40,24 @@ export async function GET(request: NextRequest) {
 
   const where: Record<string, unknown> = {};
   if (search) {
-    where.OR = [
-      { name: { contains: search } },
-      { sku: { contains: search } },
-    ];
+    where.OR = [{ title: { contains: search } }, { sku: { contains: search } }];
   }
   if (category !== "all") {
-    where.category = category;
+    where.categoryL1 = category;
   }
 
   const products = await prisma.product.findMany({
     where,
     orderBy: { updatedAt: "desc" },
+    include: { warehouseStocks: { include: { warehouse: true } } },
   });
 
-  return NextResponse.json(products);
+  const result = products.map((p) => ({
+    ...p,
+    currentStock: p.warehouseStocks.reduce((s, ws) => s + ws.stock, 0),
+  }));
+
+  return NextResponse.json(result);
 }
 
 export async function POST(request: NextRequest) {
@@ -57,7 +78,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "SKU 已存在" }, { status: 409 });
     }
 
-    const product = await prisma.product.create({ data: parsed.data });
+    const { warehouseStocks, ...prodData } = parsed.data;
+
+    const product = await prisma.product.create({
+      data: {
+        ...prodData,
+        warehouseStocks: warehouseStocks ? {
+          create: warehouseStocks,
+        } : undefined,
+      },
+    });
+
+    // Auto-create warehouse stocks for all warehouses if not specified
+    if (!warehouseStocks || warehouseStocks.length === 0) {
+      const warehouses = await prisma.warehouse.findMany();
+      await prisma.warehouseInventory.createMany({
+        data: warehouses.map((w) => ({
+          warehouseId: w.id,
+          productId: product.id,
+          stock: 0,
+        })),
+      });
+    }
 
     await prisma.operationLog.create({
       data: {
@@ -65,7 +107,7 @@ export async function POST(request: NextRequest) {
         action: "create_product",
         entityType: "product",
         entityId: product.id,
-        detail: JSON.stringify({ name: product.name, sku: product.sku }),
+        detail: JSON.stringify({ title: product.title, sku: product.sku }),
       },
     });
 

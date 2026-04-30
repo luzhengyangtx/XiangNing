@@ -20,10 +20,28 @@ export async function PUT(
       return NextResponse.json({ error: "商品不存在" }, { status: 404 });
     }
 
+    // Handle warehouse stock updates separately
+    const { warehouseStocks, ...prodData } = body;
+
     const updated = await prisma.product.update({
       where: { id },
-      data: body,
+      data: prodData,
     });
+
+    if (warehouseStocks && Array.isArray(warehouseStocks)) {
+      for (const ws of warehouseStocks) {
+        await prisma.warehouseInventory.upsert({
+          where: {
+            warehouseId_productId: {
+              warehouseId: ws.warehouseId,
+              productId: id,
+            },
+          },
+          create: ws,
+          update: ws,
+        });
+      }
+    }
 
     await prisma.operationLog.create({
       data: {
@@ -31,7 +49,7 @@ export async function PUT(
         action: "update_product",
         entityType: "product",
         entityId: id,
-        detail: JSON.stringify({ before: existing, after: body }),
+        detail: JSON.stringify({ before: { title: existing.title }, after: { ...prodData } }),
       },
     });
 
@@ -66,7 +84,7 @@ export async function DELETE(
         action: "delete_product",
         entityType: "product",
         entityId: id,
-        detail: JSON.stringify({ name: product.name, sku: product.sku }),
+        detail: JSON.stringify({ title: product.title, sku: product.sku }),
       },
     });
 

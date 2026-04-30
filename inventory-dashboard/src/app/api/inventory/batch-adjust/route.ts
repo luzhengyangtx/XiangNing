@@ -4,10 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/auth";
 
 const batchSchema = z.object({
-  items: z.array(z.object({
-    productId: z.string(),
-    delta: z.number().int(),
-  })),
+  items: z.array(z.object({ productId: z.string(), delta: z.number().int() })),
   reason: z.string().optional(),
 });
 
@@ -30,16 +27,29 @@ export async function POST(request: NextRequest) {
     for (const { productId, delta } of items) {
       try {
         const result = await prisma.$transaction(async (tx) => {
-          const product = await tx.product.findUnique({ where: { id: productId } });
+          const product = await tx.product.findUnique({
+            where: { id: productId },
+            include: { warehouseStocks: { take: 1 } },
+          });
           if (!product) throw new Error("商品不存在");
 
-          const newStock = product.currentStock + delta;
-          if (newStock < 0) throw new Error("库存不足，无法扣减");
+          const totalStock = product.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
+          const newTotal = totalStock + delta;
+          if (newTotal < 0) throw new Error("库存不足");
 
-          const updated = await tx.product.update({
+          if (product.warehouseStocks.length > 0) {
+            const ws = product.warehouseStocks[0];
+            await tx.warehouseInventory.update({
+              where: { id: ws.id },
+              data: { stock: Math.max(0, ws.stock + delta) },
+            });
+          }
+
+          const updated = await tx.product.findUnique({
             where: { id: productId },
-            data: { currentStock: newStock },
+            include: { warehouseStocks: true },
           });
+          const newActual = updated!.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
 
           await tx.operationLog.create({
             data: {
@@ -48,24 +58,18 @@ export async function POST(request: NextRequest) {
               entityType: "product",
               entityId: productId,
               detail: JSON.stringify({
-                productName: product.name,
-                delta,
-                reason: reason || (delta > 0 ? "批量加库存" : "批量减库存"),
-                from: product.currentStock,
-                to: newStock,
+                productName: product.title, delta,
+                reason: reason || "批量调整",
+                from: totalStock, to: newActual,
               }),
             },
           });
 
-          return updated;
+          return newActual;
         });
-        results.push({ productId: result.id, currentStock: result.currentStock });
+        results.push({ productId, currentStock: result });
       } catch (e) {
-        results.push({
-          productId,
-          currentStock: 0,
-          error: e instanceof Error ? e.message : "操作失败",
-        });
+        results.push({ productId, currentStock: 0, error: e instanceof Error ? e.message : "失败" });
       }
     }
 
