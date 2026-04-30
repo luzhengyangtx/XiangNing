@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { NavSidebar } from "@/components/nav-sidebar";
+import { Toaster } from "@/components/ui/sonner";
+import { AppLayout } from "@/components/app-layout";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -31,10 +32,8 @@ export default function RootLayout({
     >
       <body className="min-h-full">
         <TooltipProvider>
-          <NavSidebar />
-          <main className="ml-[200px] min-h-screen bg-zinc-50">
-            {children}
-          </main>
+          <Toaster position="top-right" richColors />
+          <AppLayout>{children}</AppLayout>
         </TooltipProvider>
       </body>
     </html>
