@@ -4,12 +4,11 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Package, Truck, RefreshCw, Link2, Settings } from "lucide-react";
+import { LayoutDashboard, Truck, RefreshCw, Link2, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 const navItems = [
-  { href: "/", label: "库存看板", icon: LayoutDashboard },
-  { href: "/products", label: "商品管理", icon: Package },
+  { href: "/", label: "商品库存", icon: LayoutDashboard },
   { href: "/purchase-orders", label: "进货管理", icon: Truck },
   { href: "/platforms", label: "平台授权", icon: Link2 },
   { href: "/sync-tasks", label: "同步任务", icon: RefreshCw },
@@ -42,7 +41,7 @@ export function NavSidebar() {
   return (
     <aside className="fixed left-0 top-0 z-40 flex h-screen w-[200px] flex-col border-r bg-sidebar">
       <Link href="/" className="flex h-14 items-center gap-2 border-b px-4 hover:bg-sidebar-accent/50">
-        <Package className="h-5 w-5 text-primary" />
+        <LayoutDashboard className="h-5 w-5 text-primary" />
         <span className="text-sm font-semibold">库存管理系统</span>
       </Link>
       <nav className="flex-1 space-y-1 p-3">
