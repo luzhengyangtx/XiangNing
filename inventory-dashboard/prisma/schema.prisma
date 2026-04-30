@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("staff") // owner, staff
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  operationLogs OperationLog[]
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  sku          String   @unique
+  barcode      String?
+  category     String
+  mainImage    String?
+  detailImages String?   // JSON array of image URLs
+  price        Float
+  unit         String   @default("个")
+  description  String?
+  safetyStock  Int      @default(0)
+  currentStock Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  platformLinks ProductPlatformLink[]
+  syncTaskItems SyncTaskItem[]
+}
+
+model Platform {
+  id        String   @id @default(cuid())
+  name      String   // 美团闪购, 饿了么, 京东到家, 抖音小时达, 微店
+  code      String   @unique // meituan, eleme, jddj, douyin, weidian
+  status    String   @default("disconnected") // connected, disconnected, expired
+  authType  String   @default("oauth") // oauth, apikey
+  authData  String?  // JSON with encrypted tokens
+  config    String?  // JSON: sync strategy, price float ratio, stock ratio
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productLinks ProductPlatformLink[]
+  syncTasks    SyncTask[]
+}
+
+model ProductPlatformLink {
+  id               String   @id @default(cuid())
+  productId        String
+  platformId       String
+  platformProductId String?  // platform-side product ID
+  platformSku      String?  // platform-side SKU
+  syncStatus       String   @default("pending") // pending, synced, failed
+  lastSyncAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, platformId])
+}
+
+model SyncTask {
+  id         String    @id @default(cuid())
+  platformId String
+  type       String    // push_inventory, push_product, pull_product, order_decrease
+  status     String    @default("pending") // pending, running, success, partial_fail, failed
+  totalCount Int       @default(0)
+  failCount  Int       @default(0)
+  errorMsg   String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  platform Platform        @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  items    SyncTaskItem[]
+}
+
+model SyncTaskItem {
+  id           String   @id @default(cuid())
+  taskId       String
+  productId    String
+  status       String   @default("pending") // pending, success, failed
+  errorCode    String?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  task    SyncTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  product Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model OperationLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+}

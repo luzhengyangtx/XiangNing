@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,25 +26,32 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { StatsCards } from "@/components/stats-cards";
-import {
-  mockInventory,
-  platformLabel,
-  platformColor,
-  type InventoryItem,
-  type PlatformStatus,
-} from "@/lib/mock-data";
-import { Search, ArrowUpDown, Plus, Minus } from "lucide-react";
+import type { InventoryItem } from "@/lib/api";
+import { fetchInventory, adjustStock } from "@/lib/api";
+import { Search, ArrowUpDown, Plus, Minus, Loader2 } from "lucide-react";
+
+const platformLabel: Record<string, string> = {
+  synced: "正常",
+  pending: "待同步",
+  failed: "异常",
+};
+const platformColor: Record<string, string> = {
+  synced: "bg-green-100 text-green-700",
+  pending: "bg-yellow-100 text-yellow-700",
+  failed: "bg-red-100 text-red-700",
+};
 
 const platforms = [
-  { key: "meituan" as const, label: "美团闪购" },
-  { key: "eleme" as const, label: "饿了么" },
-  { key: "jddj" as const, label: "京东到家" },
+  { key: "meituan", label: "美团闪购" },
+  { key: "eleme", label: "饿了么" },
+  { key: "jddj", label: "京东到家" },
 ];
 
-function StatusBadge({ status }: { status: PlatformStatus }) {
+function StatusBadge({ status }: { status?: string }) {
+  const s = status || "pending";
   return (
-    <Badge variant="outline" className={platformColor[status]}>
-      {platformLabel[status]}
+    <Badge variant="outline" className={platformColor[s] || "bg-gray-100 text-gray-500"}>
+      {platformLabel[s] || "未绑定"}
     </Badge>
   );
 }
@@ -52,33 +59,41 @@ function StatusBadge({ status }: { status: PlatformStatus }) {
 export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
-  const [sortCol, setSortCol] = useState<keyof InventoryItem | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [data, setData] = useState(mockInventory);
+  const [sortCol, setSortCol] = useState<string>("createdAt");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [loading, setLoading] = useState(true);
 
-  const categories = Array.from(new Set(mockInventory.map((i) => i.category)));
+  const [data, setData] = useState<InventoryItem[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [lowStockCount, setLowStockCount] = useState(0);
+  const [syncFailures, setSyncFailures] = useState(0);
+  const [adjusting, setAdjusting] = useState<string | null>(null);
 
-  let filtered = data.filter((item) => {
-    const matchSearch =
-      item.name.includes(search) || item.sku.toLowerCase().includes(search.toLowerCase());
-    const matchCategory = category === "all" || item.category === category;
-    return matchSearch && matchCategory;
-  });
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await fetchInventory({
+        search: search || undefined,
+        category: category === "all" ? undefined : category,
+        sortCol,
+        sortDir,
+      });
+      setData(result.items);
+      setCategories(result.categories);
+      setTotalCount(result.totalCount);
+      setLowStockCount(result.lowStockCount);
+      setSyncFailures(result.syncFailures);
+    } finally {
+      setLoading(false);
+    }
+  }, [search, category, sortCol, sortDir]);
 
-  if (sortCol) {
-    filtered = [...filtered].sort((a, b) => {
-      const aVal = a[sortCol];
-      const bVal = b[sortCol];
-      if (typeof aVal === "number" && typeof bVal === "number") {
-        return sortDir === "asc" ? aVal - bVal : bVal - aVal;
-      }
-      return sortDir === "asc"
-        ? String(aVal).localeCompare(String(bVal))
-        : String(bVal).localeCompare(String(aVal));
-    });
-  }
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
-  const handleSort = (col: keyof InventoryItem) => {
+  const handleSort = (col: string) => {
     if (sortCol === col) {
       setSortDir(sortDir === "asc" ? "desc" : "asc");
     } else {
@@ -87,23 +102,23 @@ export default function DashboardPage() {
     }
   };
 
-  const adjustStock = (id: string, delta: number) => {
-    setData((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? { ...item, currentStock: Math.max(0, item.currentStock + delta) }
-          : item
-      )
-    );
+  const handleAdjust = async (productId: string, delta: number) => {
+    setAdjusting(productId);
+    try {
+      const result = await adjustStock(productId, delta);
+      setData((prev) =>
+        prev.map((item) =>
+          item.id === productId
+            ? { ...item, currentStock: result.currentStock }
+            : item
+        )
+      );
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "操作失败");
+    } finally {
+      setAdjusting(null);
+    }
   };
-
-  const lowStockCount = data.filter((i) => i.currentStock < i.safetyStock).length;
-  const syncFailures = data.filter(
-    (i) =>
-      i.meituanStatus === "error" ||
-      i.elemeStatus === "error" ||
-      i.jddjStatus === "error"
-  ).length;
 
   return (
     <div className="space-y-6 p-6">
@@ -113,7 +128,7 @@ export default function DashboardPage() {
       </div>
 
       <StatsCards
-        totalProducts={data.length}
+        totalProducts={totalCount}
         lowStockCount={lowStockCount}
         syncFailures={syncFailures}
       />
@@ -187,14 +202,20 @@ export default function DashboardPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.length === 0 ? (
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                    <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                  </TableCell>
+                </TableRow>
+              ) : data.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
                     未找到匹配的商品
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.map((item) => (
+                data.map((item) => (
                   <TableRow key={item.id}>
                     <TableCell className="font-medium">{item.name}</TableCell>
                     <TableCell className="font-mono text-xs">{item.sku}</TableCell>
@@ -218,22 +239,19 @@ export default function DashboardPage() {
                         / {item.safetyStock}
                       </span>
                     </TableCell>
-                    <TableCell>
-                      <StatusBadge status={item.meituanStatus} />
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={item.elemeStatus} />
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={item.jddjStatus} />
-                    </TableCell>
+                    {platforms.map((p) => (
+                      <TableCell key={p.key}>
+                        <StatusBadge status={item.platformStatus?.[p.key]} />
+                      </TableCell>
+                    ))}
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="outline"
                           size="icon"
                           className="h-7 w-7"
-                          onClick={() => adjustStock(item.id, -1)}
+                          disabled={adjusting === item.id}
+                          onClick={() => handleAdjust(item.id, -1)}
                         >
                           <Minus className="h-3 w-3" />
                         </Button>
@@ -244,7 +262,8 @@ export default function DashboardPage() {
                           variant="outline"
                           size="icon"
                           className="h-7 w-7"
-                          onClick={() => adjustStock(item.id, 1)}
+                          disabled={adjusting === item.id}
+                          onClick={() => handleAdjust(item.id, 1)}
                         >
                           <Plus className="h-3 w-3" />
                         </Button>
