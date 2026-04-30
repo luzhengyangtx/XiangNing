@@ -194,14 +194,14 @@ async function main() {
   if (meituan) {
     for (const p of allProducts) {
       await prisma.productPlatformLink.create({
-        data: { productId: p.id, platformId: meituan.id, platformSku: `MT_${p.sku}`, syncStatus: "synced", lastSyncAt: new Date() },
+        data: { productId: p.id, platformId: meituan.id, platformSku: `MT_${p.sku}`, syncStatus: "synced", shelvesStatus: "on", lastSyncAt: new Date() },
       });
     }
   }
   if (eleme) {
     for (const p of allProducts) {
       await prisma.productPlatformLink.create({
-        data: { productId: p.id, platformId: eleme.id, platformSku: `ELM_${p.sku}`, syncStatus: "synced", lastSyncAt: new Date() },
+        data: { productId: p.id, platformId: eleme.id, platformSku: `ELM_${p.sku}`, syncStatus: "synced", shelvesStatus: "off", lastSyncAt: new Date() },
       });
     }
   }

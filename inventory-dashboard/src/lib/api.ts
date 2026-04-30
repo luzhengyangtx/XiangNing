@@ -1,6 +1,7 @@
 // ── Types ──
 export interface PlatformStatusItem {
   status: string;
+  shelvesStatus: string;
   errorMessage?: string | null;
 }
 
@@ -30,6 +31,15 @@ export interface InventoryItem {
   unit: string;
   weight: number | null;
   beijingId: string | null;
+  mainImage: string | null;
+  shippingSampleImage: string | null;
+  link: string | null;
+  onlineSpec: string | null;
+  purchaseSpec: string | null;
+  jdSku: string | null;
+  packagingMaterial: string | null;
+  packagingPrice: number;
+  description: string | null;
   warehouseStocks: WarehouseStockItem[];
   platformStatus: Record<string, PlatformStatusItem>;
 }
@@ -138,6 +148,13 @@ export async function unbindPlatform(platformId: string) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platformId }),
   });
   if (!res.ok) throw new Error("解绑失败");
+  return res.json();
+}
+export async function toggleShelvesStatus(productId: string, platformId: string, status: "on" | "off") {
+  const res = await fetch("/api/platforms/shelves", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productId, platformId, status }),
+  });
+  if (!res.ok) { const e = await res.json(); throw new Error(e.error || "操作失败"); }
   return res.json();
 }
 

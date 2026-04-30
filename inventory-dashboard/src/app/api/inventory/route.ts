@@ -57,11 +57,12 @@ export async function GET(request: NextRequest) {
     const totalStock = stocks.reduce((s, ws) => s + ws.stock, 0);
     const totalUnattended = stocks.reduce((s, ws) => s + ws.unattendedStock, 0);
 
-    const platformStatus: Record<string, { status: string; errorMessage?: string | null }> = {};
+    const platformStatus: Record<string, { status: string; shelvesStatus: string; errorMessage?: string | null }> = {};
     for (const link of p.platformLinks) {
       platformStatus[link.platform.code] = {
         status: link.syncStatus,
-        errorMessage: link.syncStatus === "failed" ? (p as { platformLinks?: { errorMessage?: string }[] }).platformLinks?.[0]?.errorMessage || null : null,
+        shelvesStatus: link.shelvesStatus,
+        errorMessage: link.syncStatus === "failed" ? (link as { errorMessage?: string }).errorMessage || null : null,
       };
     }
 
@@ -80,6 +81,15 @@ export async function GET(request: NextRequest) {
       unit: p.unit,
       weight: p.weight,
       beijingId: p.beijingId,
+      mainImage: p.mainImage,
+      shippingSampleImage: p.shippingSampleImage,
+      link: p.link,
+      onlineSpec: p.onlineSpec,
+      purchaseSpec: p.purchaseSpec,
+      jdSku: p.jdSku,
+      packagingMaterial: p.packagingMaterial,
+      packagingPrice: p.packagingPrice,
+      description: p.description,
       warehouseStocks: stocks.map((ws) => ({
         warehouseId: ws.warehouse.id,
         warehouseName: ws.warehouse.name,
