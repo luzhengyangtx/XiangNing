@@ -5,75 +5,95 @@ import { getAuthUser } from "@/lib/auth";
 
 const adjustSchema = z.object({
   productId: z.string(),
+  warehouseId: z.string(),
   delta: z.number().int(),
+  isUnattended: z.boolean().optional(),
   reason: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
   const user = await getAuthUser();
-  if (!user) {
-    return NextResponse.json({ error: "请先登录" }, { status: 401 });
-  }
+  if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
   try {
     const body = await request.json();
-    const parsed = adjustSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json({ error: "参数不正确" }, { status: 400 });
-    }
+    const p = adjustSchema.safeParse(body);
+    if (!p.success) return NextResponse.json({ error: "参数不正确" }, { status: 400 });
 
-    const { productId, delta, reason } = parsed.data;
+    const { productId, warehouseId, delta, isUnattended, reason } = p.data;
 
     const result = await prisma.$transaction(async (tx) => {
-      const product = await tx.product.findUnique({
-        where: { id: productId },
-        include: { warehouseStocks: { take: 1 } },
-      });
+      const product = await tx.product.findUnique({ where: { id: productId } });
       if (!product) throw new Error("商品不存在");
 
-      const totalStock = product.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
-      const newTotal = totalStock + delta;
-      if (newTotal < 0) throw new Error("库存不足，无法扣减");
+      const inv = await tx.warehouseInventory.findUnique({
+        where: { warehouseId_productId: { warehouseId, productId } },
+        include: { warehouse: true },
+      });
+      if (!inv) throw new Error("该仓库无此商品库存");
 
-      // Update first warehouse stock (国贸)
-      if (product.warehouseStocks.length > 0) {
-        const ws = product.warehouseStocks[0];
+      if (isUnattended) {
+        const newUnattended = inv.unattendedStock + delta;
+        if (newUnattended < 0) throw new Error("无人值守库存不足");
+        if (newUnattended > inv.stock) throw new Error("无人值守库存不能超过总库存");
+
         await tx.warehouseInventory.update({
-          where: { id: ws.id },
-          data: { stock: Math.max(0, ws.stock + delta) },
+          where: { id: inv.id },
+          data: { unattendedStock: newUnattended },
         });
+
+        // Also adjust total stock when unattended changes (linked deduction)
+        await tx.warehouseInventory.update({
+          where: { id: inv.id },
+          data: { stock: Math.max(0, inv.stock + delta) },
+        });
+      } else {
+        const newStock = inv.stock + delta;
+        if (newStock < 0) throw new Error("库存不足，无法扣减");
+
+        await tx.warehouseInventory.update({
+          where: { id: inv.id },
+          data: { stock: newStock },
+        });
+
+        // If unattended exists and would exceed stock, clamp it
+        if (inv.unattendedStock > newStock) {
+          await tx.warehouseInventory.update({
+            where: { id: inv.id },
+            data: { unattendedStock: newStock },
+          });
+        }
       }
 
-      // Recalculate total
-      const updatedProduct = await tx.product.findUnique({
-        where: { id: productId },
-        include: { warehouseStocks: true },
+      const updated = await tx.warehouseInventory.findUnique({
+        where: { id: inv.id },
       });
-      const newTotalActual = updatedProduct!.warehouseStocks.reduce((s, ws) => s + ws.stock, 0);
 
       await tx.operationLog.create({
         data: {
           userId: user.userId,
           action: delta > 0 ? "stock_in" : "stock_out",
-          entityType: "product",
+          entityType: "inventory",
           entityId: productId,
           detail: JSON.stringify({
             productName: product.title,
+            warehouse: inv.warehouse.name,
+            mode: isUnattended ? "unattended" : "normal",
             delta,
             reason: reason || (delta > 0 ? "手动加库存" : "手动减库存"),
-            from: totalStock,
-            to: newTotalActual,
+            stock: updated!.stock,
+            unattendedStock: updated!.unattendedStock,
           }),
         },
       });
 
-      return { productId, currentStock: newTotalActual };
+      return { productId, currentStock: updated!.stock, unattendedStock: updated!.unattendedStock };
     });
 
     return NextResponse.json(result);
   } catch (e) {
-    const message = e instanceof Error ? e.message : "操作失败";
-    const status = message === "库存不足，无法扣减" ? 422 : 500;
-    return NextResponse.json({ error: message }, { status });
+    const msg = e instanceof Error ? e.message : "操作失败";
+    const status = msg.includes("库存不足") ? 422 : msg.includes("不存在") ? 404 : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 }

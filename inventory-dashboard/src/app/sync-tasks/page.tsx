@@ -29,7 +29,7 @@ interface SyncTaskItem {
   status: string;
   errorCode: string | null;
   errorMessage: string | null;
-  product: { name: string; sku: string };
+  product: { title: string; sku: string };
 }
 
 interface SyncTask {
@@ -236,7 +236,7 @@ export default function SyncTasksPage() {
                         <TableBody>
                           {task.items.map((item) => (
                             <TableRow key={item.id}>
-                              <TableCell className="text-sm">{item.product.name}</TableCell>
+                              <TableCell className="text-sm">{item.product.title}</TableCell>
                               <TableCell className="font-mono text-xs">{item.product.sku}</TableCell>
                               <TableCell>
                                 <Badge

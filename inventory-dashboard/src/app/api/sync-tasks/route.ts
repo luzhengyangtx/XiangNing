@@ -7,7 +7,7 @@ export async function GET() {
       platform: { select: { name: true, code: true } },
       items: {
         include: {
-          product: { select: { name: true, sku: true } },
+          product: { select: { title: true, sku: true } },
         },
       },
     },

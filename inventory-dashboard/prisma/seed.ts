@@ -20,7 +20,7 @@ async function main() {
 
   // ── Warehouses ──
   const whGuomao = await prisma.warehouse.create({
-    data: { name: "国贸", code: "guomao", address: "北京市朝阳区国贸" },
+    data: { name: "国贸", code: "guomao", address: "北京市朝阳区国贸", isUnattendedMode: true },
   });
   const whHaidian = await prisma.warehouse.create({
     data: { name: "海淀", code: "haidian", address: "北京市海淀区" },
@@ -234,6 +234,22 @@ async function main() {
     ],
   });
   console.log("Operation logs created.");
+
+  // ── Sample Purchase Order ──
+  const samplePO = await prisma.purchaseOrder.create({
+    data: {
+      warehouseId: whGuomao.id,
+      status: "pending",
+      note: "情人节前补货",
+      items: {
+        create: [
+          { productId: allProducts[0].id, sku: allProducts[0].sku, quantity: 10, costPrice: allProducts[0].costPrice, link: allProducts[0].link },
+          { productId: allProducts[3].id, sku: allProducts[3].sku, quantity: 5, costPrice: allProducts[3].costPrice, link: allProducts[3].link },
+        ],
+      },
+    },
+  });
+  console.log("Sample purchase order created:", samplePO.id);
 
   console.log("\n✅ Seed completed.");
   console.log("   店长: admin@inventory.local / admin123");

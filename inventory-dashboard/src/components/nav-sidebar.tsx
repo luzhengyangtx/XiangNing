@@ -4,20 +4,15 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  LayoutDashboard,
-  Package,
-  RefreshCw,
-  Link2,
-  Settings,
-} from "lucide-react";
+import { LayoutDashboard, Package, Truck, RefreshCw, Link2, Settings } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 const navItems = [
   { href: "/", label: "库存看板", icon: LayoutDashboard },
   { href: "/products", label: "商品管理", icon: Package },
-  { href: "/sync-tasks", label: "同步任务", icon: RefreshCw },
+  { href: "/purchase-orders", label: "进货管理", icon: Truck },
   { href: "/platforms", label: "平台授权", icon: Link2 },
+  { href: "/sync-tasks", label: "同步任务", icon: RefreshCw },
   { href: "/settings", label: "系统设置", icon: Settings },
 ];
 
@@ -26,26 +21,21 @@ export function NavSidebar() {
   const [syncFails, setSyncFails] = useState(0);
 
   useEffect(() => {
-    // Fetch sync failure count
     const fetchFails = async () => {
       try {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const res = await fetch(`/api/sync-tasks`);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const res = await fetch("/api/sync-tasks");
         if (!res.ok) return;
         const tasks = await res.json();
         const todayFails = tasks.filter(
           (t: { status: string; createdAt: string }) =>
-            (t.status === "failed" || t.status === "partial_fail") &&
-            new Date(t.createdAt) >= today
+            (t.status === "failed" || t.status === "partial_fail") && new Date(t.createdAt) >= today
         ).length;
         setSyncFails(todayFails);
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore */ }
     };
     fetchFails();
-    const interval = setInterval(fetchFails, 30000); // every 30s
+    const interval = setInterval(fetchFails, 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -72,21 +62,13 @@ export function NavSidebar() {
             >
               <item.icon className="h-4 w-4" />
               <span className="flex-1">{item.label}</span>
-              {showBadge ? (
-                <Badge variant="destructive" className="h-5 min-w-5 px-1 text-[10px]">
-                  {syncFails}
-                </Badge>
-              ) : null}
+              {showBadge && (
+                <Badge variant="destructive" className="h-5 min-w-5 px-1 text-[10px]">{syncFails}</Badge>
+              )}
             </Link>
           );
         })}
       </nav>
-      <div className="border-t p-3">
-        <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted-foreground">
-          <div className="h-2 w-2 rounded-full bg-green-500" />
-          美团闪购 · 已连接
-        </div>
-      </div>
     </aside>
   );
 }
